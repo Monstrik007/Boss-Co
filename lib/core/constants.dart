@@ -4,6 +4,7 @@ class GameConstants {
   static const serviceName = 'BossVsSlaves';
   static const port = 45678;
   static const salaryAmount = 5000;
+  static const defaultFineAmount = 500;
   static const maxPlayers = 6;
 }
 
@@ -20,13 +21,19 @@ enum MessageType {
   rejoin,
   assignTask,
   completeTask,
+  resolveTask,
   fine,
   buyItem,
   prank,
   chat,
   officePhoto,
+  officePhotoPatch,
+  officePhotoReaction,
+  officePhotoComment,
   prankEffect,
   error,
 }
 
-enum TaskStatus { none, active, done, failed }
+enum TaskStatus { none, active, awaitingBoss, refused }
+
+enum BossTaskDecision { pay, skip, fine }

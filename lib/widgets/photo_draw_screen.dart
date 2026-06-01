@@ -30,21 +30,26 @@ class PhotoDrawScreen extends StatefulWidget {
 class _PhotoDrawScreenState extends State<PhotoDrawScreen> {
   final List<DrawStroke> _strokes = [];
   final List<DrawPoint> _currentPoints = [];
-  Color _color = Colors.red;
-  double _width = 4;
   final _captionController = TextEditingController();
 
-  void _onPanStart(DragStartDetails d, Size size) {
-    _currentPoints.clear();
-    _addPoint(d.localPosition, size);
+  Color _color = Colors.red;
+  final double _width = 4;
+  int? _activeDrawPointer;
+
+  @override
+  void dispose() {
+    _captionController.dispose();
+    super.dispose();
   }
 
-  void _onPanUpdate(DragUpdateDetails d, Size size) {
-    _addPoint(d.localPosition, size);
-    setState(() {});
+  void _addPoint(Offset pos, Size size) {
+    _currentPoints.add(DrawPoint(
+      x: (pos.dx / size.width).clamp(0.0, 1.0),
+      y: (pos.dy / size.height).clamp(0.0, 1.0),
+    ));
   }
 
-  void _onPanEnd(DragEndDetails d) {
+  void _finishDrawStroke() {
     if (_currentPoints.length >= 2) {
       _strokes.add(DrawStroke(
         points: List.from(_currentPoints),
@@ -56,11 +61,23 @@ class _PhotoDrawScreenState extends State<PhotoDrawScreen> {
     setState(() {});
   }
 
-  void _addPoint(Offset pos, Size size) {
-    _currentPoints.add(DrawPoint(
-      x: (pos.dx / size.width).clamp(0.0, 1.0),
-      y: (pos.dy / size.height).clamp(0.0, 1.0),
-    ));
+  void _onDrawPointerDown(PointerDownEvent e, Size size) {
+    _activeDrawPointer = e.pointer;
+    _currentPoints.clear();
+    _addPoint(e.localPosition, size);
+    setState(() {});
+  }
+
+  void _onDrawPointerMove(PointerMoveEvent e, Size size) {
+    if (_activeDrawPointer != e.pointer) return;
+    _addPoint(e.localPosition, size);
+    setState(() {});
+  }
+
+  void _onDrawPointerUp(PointerEvent e, Size size) {
+    if (_activeDrawPointer != e.pointer) return;
+    _activeDrawPointer = null;
+    _finishDrawStroke();
   }
 
   void _submit() {
@@ -78,27 +95,16 @@ class _PhotoDrawScreenState extends State<PhotoDrawScreen> {
   }
 
   @override
-  void dispose() {
-    _captionController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: AppTheme.darkBg,
       appBar: AppBar(
-        title: const Text('Рисуем на фото'),
+        title: const Text('Редактор поста'),
         actions: [
           TextButton(
-            onPressed: () => setState(() {
-              if (_strokes.isNotEmpty) _strokes.removeLast();
-            }),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
             onPressed: _submit,
-            child: const Text('В офис', style: TextStyle(color: AppTheme.gold)),
+            child: const Text('Готово', style: TextStyle(color: AppTheme.gold)),
           ),
         ],
       ),
@@ -108,47 +114,71 @@ class _PhotoDrawScreenState extends State<PhotoDrawScreen> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
-                return GestureDetector(
-                  onPanStart: (d) => _onPanStart(d, size),
-                  onPanUpdate: (d) => _onPanUpdate(d, size),
-                  onPanEnd: _onPanEnd,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.memory(widget.imageBytes, fit: BoxFit.contain),
-                      CustomPaint(
-                        painter: _LivePainter(
-                          strokes: _strokes,
-                          current: _currentPoints,
-                          color: _color,
-                          width: _width,
-                        ),
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.memory(widget.imageBytes, fit: BoxFit.contain),
+                    CustomPaint(
+                      painter: _LivePainter(
+                        strokes: _strokes,
+                        current: _currentPoints,
+                        color: _color,
+                        width: _width,
                       ),
-                    ],
-                  ),
+                    ),
+                    Positioned.fill(
+                      child: Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerDown: (e) => _onDrawPointerDown(e, size),
+                        onPointerMove: (e) => _onDrawPointerMove(e, size),
+                        onPointerUp: (e) => _onDrawPointerUp(e, size),
+                        onPointerCancel: (e) => _onDrawPointerUp(e, size),
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
             child: Column(
               children: [
                 TextField(
                   controller: _captionController,
                   decoration: const InputDecoration(
-                    labelText: 'Подпись (необязательно)',
+                    labelText: 'Подпись к посту (необязательно)',
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _ColorDot(color: Colors.red, selected: _color == Colors.red, onTap: () => setState(() => _color = Colors.red)),
-                    _ColorDot(color: Colors.yellow, selected: _color == Colors.yellow, onTap: () => setState(() => _color = Colors.yellow)),
-                    _ColorDot(color: Colors.green, selected: _color == Colors.green, onTap: () => setState(() => _color = Colors.green)),
-                    _ColorDot(color: Colors.blue, selected: _color == Colors.blue, onTap: () => setState(() => _color = Colors.blue)),
-                    _ColorDot(color: Colors.white, selected: _color == Colors.white, onTap: () => setState(() => _color = Colors.white)),
+                    _ColorDot(
+                      color: Colors.red,
+                      selected: _color == Colors.red,
+                      onTap: () => setState(() => _color = Colors.red),
+                    ),
+                    _ColorDot(
+                      color: Colors.yellow,
+                      selected: _color == Colors.yellow,
+                      onTap: () => setState(() => _color = Colors.yellow),
+                    ),
+                    _ColorDot(
+                      color: Colors.green,
+                      selected: _color == Colors.green,
+                      onTap: () => setState(() => _color = Colors.green),
+                    ),
+                    _ColorDot(
+                      color: Colors.blue,
+                      selected: _color == Colors.blue,
+                      onTap: () => setState(() => _color = Colors.blue),
+                    ),
+                    _ColorDot(
+                      color: Colors.white,
+                      selected: _color == Colors.white,
+                      onTap: () => setState(() => _color = Colors.white),
+                    ),
                   ],
                 ),
               ],
@@ -214,7 +244,13 @@ class _LivePainter extends CustomPainter {
     }
   }
 
-  void _drawStroke(Canvas canvas, Size size, List<DrawPoint> points, Color c, double w) {
+  void _drawStroke(
+    Canvas canvas,
+    Size size,
+    List<DrawPoint> points,
+    Color c,
+    double w,
+  ) {
     final paint = Paint()
       ..color = c
       ..strokeWidth = w

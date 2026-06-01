@@ -1,5 +1,21 @@
 import '../core/constants.dart';
 
+TaskStatus _parseTaskStatus(String? name) {
+  switch (name) {
+    case 'active':
+      return TaskStatus.active;
+    case 'awaitingBoss':
+      return TaskStatus.awaitingBoss;
+    case 'refused':
+      return TaskStatus.refused;
+    case 'done':
+    case 'failed':
+      return TaskStatus.none;
+    default:
+      return TaskStatus.none;
+  }
+}
+
 class ShopItem {
   const ShopItem({
     required this.id,
@@ -140,6 +156,123 @@ class DrawStroke {
       );
 }
 
+/// Текст на фото в редакторе поста (позиция — центр, 0…1).
+class PhotoTextOverlay {
+  const PhotoTextOverlay({
+    required this.id,
+    required this.text,
+    required this.x,
+    required this.y,
+    this.rotation = 0,
+    this.scale = 1,
+    this.color = 0xFFFFFFFF,
+    this.fontSize = 28,
+  });
+
+  final String id;
+  final String text;
+  final double x;
+  final double y;
+  final double rotation;
+  final double scale;
+  final int color;
+  final double fontSize;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'text': text,
+        'x': x,
+        'y': y,
+        'rotation': rotation,
+        'scale': scale,
+        'color': color,
+        'fontSize': fontSize,
+      };
+
+  factory PhotoTextOverlay.fromJson(Map<String, dynamic> json) =>
+      PhotoTextOverlay(
+        id: json['id'] as String? ?? '',
+        text: json['text'] as String? ?? '',
+        x: (json['x'] as num?)?.toDouble() ?? 0.5,
+        y: (json['y'] as num?)?.toDouble() ?? 0.5,
+        rotation: (json['rotation'] as num?)?.toDouble() ?? 0,
+        scale: (json['scale'] as num?)?.toDouble() ?? 1,
+        color: json['color'] as int? ?? 0xFFFFFFFF,
+        fontSize: (json['fontSize'] as num?)?.toDouble() ?? 28,
+      );
+
+  PhotoTextOverlay copyWith({
+    String? text,
+    double? x,
+    double? y,
+    double? rotation,
+    double? scale,
+    int? color,
+    double? fontSize,
+  }) =>
+      PhotoTextOverlay(
+        id: id,
+        text: text ?? this.text,
+        x: x ?? this.x,
+        y: y ?? this.y,
+        rotation: rotation ?? this.rotation,
+        scale: scale ?? this.scale,
+        color: color ?? this.color,
+        fontSize: fontSize ?? this.fontSize,
+      );
+}
+
+/// Реакции на доске офиса.
+class OfficeReactions {
+  static const emojis = ['😂', '💩', '👹', '❤️', '👍'];
+}
+
+class PhotoReaction {
+  const PhotoReaction({required this.emoji, required this.playerId});
+
+  final String emoji;
+  final String playerId;
+
+  Map<String, dynamic> toJson() => {'emoji': emoji, 'playerId': playerId};
+
+  factory PhotoReaction.fromJson(Map<String, dynamic> json) => PhotoReaction(
+        emoji: json['emoji'] as String,
+        playerId: json['playerId'] as String,
+      );
+}
+
+class PhotoComment {
+  const PhotoComment({
+    required this.id,
+    required this.authorId,
+    required this.authorName,
+    required this.text,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String authorId;
+  final String authorName;
+  final String text;
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'authorId': authorId,
+        'authorName': authorName,
+        'text': text,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory PhotoComment.fromJson(Map<String, dynamic> json) => PhotoComment(
+        id: json['id'] as String,
+        authorId: json['authorId'] as String,
+        authorName: json['authorName'] as String,
+        text: json['text'] as String,
+        createdAt: DateTime.parse(json['createdAt'] as String),
+      );
+}
+
 class OfficePhoto {
   OfficePhoto({
     required this.id,
@@ -148,8 +281,14 @@ class OfficePhoto {
     required this.imageBase64,
     required this.createdAt,
     List<DrawStroke>? strokes,
+    List<PhotoTextOverlay>? textOverlays,
+    List<PhotoReaction>? reactions,
+    List<PhotoComment>? comments,
     this.caption,
-  }) : strokes = strokes ?? [];
+  })  : strokes = strokes ?? [],
+        textOverlays = textOverlays ?? [],
+        reactions = reactions ?? [],
+        comments = comments ?? [];
 
   final String id;
   final String authorId;
@@ -157,7 +296,16 @@ class OfficePhoto {
   final String imageBase64;
   final DateTime createdAt;
   final List<DrawStroke> strokes;
+  final List<PhotoTextOverlay> textOverlays;
+  final List<PhotoReaction> reactions;
+  final List<PhotoComment> comments;
   final String? caption;
+
+  bool hasReaction(String playerId, String emoji) =>
+      reactions.any((r) => r.playerId == playerId && r.emoji == emoji);
+
+  int countForEmoji(String emoji) =>
+      reactions.where((r) => r.emoji == emoji).length;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -166,6 +314,9 @@ class OfficePhoto {
         'imageBase64': imageBase64,
         'createdAt': createdAt.toIso8601String(),
         'strokes': strokes.map((s) => s.toJson()).toList(),
+        'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
+        'reactions': reactions.map((r) => r.toJson()).toList(),
+        'comments': comments.map((c) => c.toJson()).toList(),
         if (caption != null) 'caption': caption,
       };
 
@@ -179,10 +330,43 @@ class OfficePhoto {
                 ?.map((e) => DrawStroke.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             [],
+        textOverlays: (json['textOverlays'] as List<dynamic>?)
+                ?.map((e) => PhotoTextOverlay.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
+        reactions: (json['reactions'] as List<dynamic>?)
+                ?.map((e) => PhotoReaction.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
+        comments: (json['comments'] as List<dynamic>?)
+                ?.map((e) => PhotoComment.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
         caption: json['caption'] as String?,
       );
 
   bool get hasImage => imageBase64.isNotEmpty;
+
+  OfficePhoto copyWith({
+    String? imageBase64,
+    List<DrawStroke>? strokes,
+    List<PhotoTextOverlay>? textOverlays,
+    List<PhotoReaction>? reactions,
+    List<PhotoComment>? comments,
+    String? caption,
+  }) =>
+      OfficePhoto(
+        id: id,
+        authorId: authorId,
+        authorName: authorName,
+        imageBase64: imageBase64 ?? this.imageBase64,
+        createdAt: createdAt,
+        strokes: strokes ?? this.strokes,
+        textOverlays: textOverlays ?? this.textOverlays,
+        reactions: reactions ?? this.reactions,
+        comments: comments ?? this.comments,
+        caption: caption ?? this.caption,
+      );
 
   Map<String, dynamic> toMetadataJson() => {
         'id': id,
@@ -190,6 +374,9 @@ class OfficePhoto {
         'authorName': authorName,
         'createdAt': createdAt.toIso8601String(),
         'strokes': strokes.map((s) => s.toJson()).toList(),
+        'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
+        'reactions': reactions.map((r) => r.toJson()).toList(),
+        'comments': comments.map((c) => c.toJson()).toList(),
         if (caption != null) 'caption': caption,
       };
 }
@@ -328,8 +515,7 @@ class PlayerModel {
                 .toList() ??
             [],
         currentTaskId: json['currentTaskId'] as String?,
-        taskStatus: TaskStatus.values
-            .byName(json['taskStatus'] as String? ?? 'none'),
+        taskStatus: _parseTaskStatus(json['taskStatus'] as String?),
         usedPranks: (json['usedPranks'] as List<dynamic>?)
                 ?.map((e) => e as String)
                 .toList() ??
@@ -411,6 +597,8 @@ class GameState {
     this.winnerId,
     this.winnerName,
     this.localPlayerId,
+    this.defaultSalaryAmount = GameConstants.salaryAmount,
+    this.defaultFineAmount = GameConstants.defaultFineAmount,
   })  : events = events ?? [],
         messages = messages ?? [],
         officePhotos = officePhotos ?? [],
@@ -429,6 +617,8 @@ class GameState {
   final String? winnerId;
   final String? winnerName;
   final String? localPlayerId;
+  final int defaultSalaryAmount;
+  final int defaultFineAmount;
 
   bool get isPlaying => phase == GamePhase.playing;
 
@@ -494,6 +684,8 @@ class GameState {
         if (activePrank != null) 'activePrank': activePrank!.toJson(),
         'winnerId': winnerId,
         'winnerName': winnerName,
+        'defaultSalaryAmount': defaultSalaryAmount,
+        'defaultFineAmount': defaultFineAmount,
       };
 
   factory GameState.fromJson(Map<String, dynamic> json) => GameState(
@@ -525,6 +717,11 @@ class GameState {
             : null,
         winnerId: json['winnerId'] as String?,
         winnerName: json['winnerName'] as String?,
+        defaultSalaryAmount:
+            (json['defaultSalaryAmount'] as num?)?.toInt() ??
+                GameConstants.salaryAmount,
+        defaultFineAmount: (json['defaultFineAmount'] as num?)?.toInt() ??
+            GameConstants.defaultFineAmount,
       );
 
   GameState copyWith({
@@ -542,6 +739,8 @@ class GameState {
     String? winnerId,
     String? winnerName,
     String? localPlayerId,
+    int? defaultSalaryAmount,
+    int? defaultFineAmount,
   }) {
     return GameState(
       roomId: roomId ?? this.roomId,
@@ -557,6 +756,8 @@ class GameState {
       winnerId: winnerId ?? this.winnerId,
       winnerName: winnerName ?? this.winnerName,
       localPlayerId: localPlayerId ?? this.localPlayerId,
+      defaultSalaryAmount: defaultSalaryAmount ?? this.defaultSalaryAmount,
+      defaultFineAmount: defaultFineAmount ?? this.defaultFineAmount,
     );
   }
 }

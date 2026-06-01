@@ -274,7 +274,9 @@ class GameServer {
       case MessageType.rejoin:
         _handleRejoin(client, msg);
       case MessageType.completeTask:
-        _handleCompleteTask(msg);
+        _handleRespondTask(msg);
+      case MessageType.resolveTask:
+        break;
       case MessageType.buyItem:
         _handleBuyItem(msg);
       case MessageType.prank:
@@ -283,6 +285,10 @@ class GameServer {
         _handleChat(msg);
       case MessageType.officePhoto:
         _handleOfficePhoto(msg);
+      case MessageType.officePhotoReaction:
+        _handleOfficePhotoReaction(msg);
+      case MessageType.officePhotoComment:
+        _handleOfficePhotoComment(msg);
       default:
         break;
     }
@@ -445,12 +451,15 @@ class GameServer {
 
     if (targets.isEmpty) return;
 
+    final amount = _state.defaultSalaryAmount;
+    if (amount <= 0) return;
+
     final players = List<PlayerModel>.from(_state.players);
     for (final target in targets) {
       final idx = players.indexWhere((p) => p.id == target.id);
       if (idx >= 0) {
         players[idx] = players[idx].copyWith(
-          balance: players[idx].balance + GameConstants.salaryAmount,
+          balance: players[idx].balance + amount,
         );
       }
     }
@@ -458,9 +467,17 @@ class GameServer {
 
     _addEvent(
       playerId != null
-          ? '${targets.first.name} получил ${GameConstants.salaryAmount}₽'
-          : 'Зарплата всем: +${GameConstants.salaryAmount}₽',
+          ? '${targets.first.name} получил $amount₽'
+          : 'Зарплата всем: +$amount₽',
       '💸',
+    );
+    _pushState();
+  }
+
+  void setPayDefaults({required int salaryAmount, required int fineAmount}) {
+    _state = _state.copyWith(
+      defaultSalaryAmount: salaryAmount.clamp(0, 999999999),
+      defaultFineAmount: fineAmount.clamp(0, 999999999),
     );
     _pushState();
   }
@@ -525,7 +542,7 @@ class GameServer {
     return GameContent.taskById(taskId);
   }
 
-  void _handleCompleteTask(NetworkMessage msg) {
+  void _handleRespondTask(NetworkMessage msg) {
     if (_state.phase != GamePhase.playing) return;
     final playerId = msg.senderId;
     if (playerId == null) return;
@@ -539,21 +556,73 @@ class GameServer {
     final task = _resolveTask(player.currentTaskId!);
     if (task == null) return;
 
-    final success = msg.payload['success'] as bool? ?? true;
+    final accepted = msg.payload['accepted'] as bool? ??
+        msg.payload['success'] as bool? ??
+        true;
     final players = List<PlayerModel>.from(_state.players);
     final current = players[idx];
-    if (success) {
-      players[idx] = current.copyWith(
-        balance: current.balance + task.reward,
-        clearTask: true,
+    if (accepted) {
+      players[idx] = current.copyWith(taskStatus: TaskStatus.awaitingBoss);
+      _addEvent(
+        '${current.name} согласился на «${task.title}» — ждёт твоего решения',
+        '✋',
       );
-      _addEvent('${current.name} выполнил «${task.title}» (+${task.reward}₽)', '✅');
     } else {
-      players[idx] = current.copyWith(
-        balance: (current.balance - task.penalty).clamp(0, 999999999),
-        clearTask: true,
+      players[idx] = current.copyWith(taskStatus: TaskStatus.refused);
+      _addEvent(
+        '${current.name} отказался от «${task.title}» — ждёт твоего решения',
+        '🙅',
       );
-      _addEvent('${current.name} провалил «${task.title}» (−${task.penalty}₽)', '❌');
+    }
+
+    _state = _state.copyWith(players: players);
+    _pushState();
+  }
+
+  void resolveTask({
+    required String playerId,
+    required BossTaskDecision decision,
+  }) {
+    if (_state.phase != GamePhase.playing) return;
+
+    final idx = _state.players.indexWhere((p) => p.id == playerId);
+    if (idx < 0) return;
+
+    final player = _state.players[idx];
+    final pending = player.taskStatus == TaskStatus.awaitingBoss ||
+        player.taskStatus == TaskStatus.refused;
+    if (!pending || player.currentTaskId == null) return;
+
+    final task = _resolveTask(player.currentTaskId!);
+    if (task == null) return;
+
+    final players = List<PlayerModel>.from(_state.players);
+    final current = players[idx];
+    switch (decision) {
+      case BossTaskDecision.pay:
+        players[idx] = current.copyWith(
+          balance: current.balance + task.reward,
+          clearTask: true,
+        );
+        _addEvent(
+          'Выплата ${current.name}: +${task.reward}₽ за «${task.title}»',
+          '💰',
+        );
+      case BossTaskDecision.skip:
+        players[idx] = current.copyWith(clearTask: true);
+        _addEvent(
+          'Без выплаты ${current.name} за «${task.title}»',
+          '🚫',
+        );
+      case BossTaskDecision.fine:
+        players[idx] = current.copyWith(
+          balance: (current.balance - task.penalty).clamp(0, 999999999),
+          clearTask: true,
+        );
+        _addEvent(
+          'Штраф ${current.name}: −${task.penalty}₽ за «${task.title}»',
+          '⚖️',
+        );
     }
 
     _state = _state.copyWith(players: players);
@@ -714,6 +783,7 @@ class GameServer {
   void postOfficePhoto({
     required String imageBase64,
     required List<DrawStroke> strokes,
+    List<PhotoTextOverlay> textOverlays = const [],
     String? caption,
   }) {
     _handleOfficePhoto(NetworkMessage(
@@ -723,6 +793,7 @@ class GameServer {
         'id': _uuid.v4(),
         'imageBase64': imageBase64,
         'strokes': strokes.map((s) => s.toJson()).toList(),
+        'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
         if (caption != null) 'caption': caption,
       },
     ));
@@ -745,6 +816,10 @@ class GameServer {
     final strokes = strokesJson
         .map((e) => DrawStroke.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();
+    final textJson = msg.payload['textOverlays'] as List<dynamic>? ?? [];
+    final textOverlays = textJson
+        .map((e) => PhotoTextOverlay.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
 
     final photo = OfficePhoto(
       id: msg.payload['id'] as String? ?? _uuid.v4(),
@@ -753,6 +828,7 @@ class GameServer {
       imageBase64: imageBase64,
       createdAt: DateTime.now(),
       strokes: strokes,
+      textOverlays: textOverlays,
       caption: msg.payload['caption'] as String?,
     );
 
@@ -783,6 +859,99 @@ class GameServer {
     for (final client in _clients.values) {
       _send(client, msg);
     }
+  }
+
+  void _updateOfficePhoto(OfficePhoto photo) {
+    final idx = _state.officePhotos.indexWhere((p) => p.id == photo.id);
+    if (idx < 0) return;
+    final photos = List<OfficePhoto>.from(_state.officePhotos);
+    photos[idx] = photo;
+    _state = _state.copyWith(officePhotos: photos);
+    _broadcastOfficePhotoPatch(photo);
+    _pushState();
+  }
+
+  void _broadcastOfficePhotoPatch(OfficePhoto photo) {
+    final msg = NetworkMessage(
+      type: MessageType.officePhotoPatch,
+      payload: {
+        'id': photo.id,
+        'reactions': photo.reactions.map((r) => r.toJson()).toList(),
+        'comments': photo.comments.map((c) => c.toJson()).toList(),
+      },
+    );
+    for (final client in _clients.values) {
+      _send(client, msg);
+    }
+    if (!_stateController.isClosed) {
+      _stateController.add(_state);
+    }
+  }
+
+  void _handleOfficePhotoReaction(NetworkMessage msg) {
+    final fromId = msg.senderId;
+    final photoId = msg.payload['photoId'] as String?;
+    final emoji = msg.payload['emoji'] as String?;
+    if (fromId == null || photoId == null || emoji == null) return;
+    if (!OfficeReactions.emojis.contains(emoji)) return;
+
+    final idx = _state.officePhotos.indexWhere((p) => p.id == photoId);
+    if (idx < 0) return;
+
+    final photo = _state.officePhotos[idx];
+    final reactions = List<PhotoReaction>.from(photo.reactions);
+    final existing = reactions.indexWhere(
+      (r) => r.playerId == fromId && r.emoji == emoji,
+    );
+    if (existing >= 0) {
+      reactions.removeAt(existing);
+    } else {
+      reactions.add(PhotoReaction(emoji: emoji, playerId: fromId));
+    }
+    _updateOfficePhoto(photo.copyWith(reactions: reactions));
+  }
+
+  void _handleOfficePhotoComment(NetworkMessage msg) {
+    final fromId = msg.senderId;
+    final photoId = msg.payload['photoId'] as String?;
+    final text = (msg.payload['text'] as String?)?.trim();
+    if (fromId == null || photoId == null || text == null || text.isEmpty) return;
+
+    final from = _state.players.cast<PlayerModel?>().firstWhere(
+          (p) => p?.id == fromId,
+          orElse: () => null,
+        );
+    if (from == null) return;
+
+    final idx = _state.officePhotos.indexWhere((p) => p.id == photoId);
+    if (idx < 0) return;
+
+    final photo = _state.officePhotos[idx];
+    final comments = List<PhotoComment>.from(photo.comments)
+      ..add(PhotoComment(
+        id: _uuid.v4(),
+        authorId: fromId,
+        authorName: from.name,
+        text: text,
+        createdAt: DateTime.now(),
+      ));
+    _updateOfficePhoto(photo.copyWith(comments: comments));
+  }
+
+  void toggleOfficePhotoReaction(String photoId, String emoji) {
+    _handleOfficePhotoReaction(NetworkMessage(
+      type: MessageType.officePhotoReaction,
+      senderId: bossPlayerId,
+      payload: {'photoId': photoId, 'emoji': emoji},
+    ));
+  }
+
+  void addOfficePhotoComment(String photoId, String text) {
+    _handleOfficePhotoComment(NetworkMessage(
+      type: MessageType.officePhotoComment,
+      senderId: bossPlayerId,
+      payload: {'photoId': photoId, 'text': text},
+    ));
   }
 
   void _sendExistingPhotosTo(Socket client) {
@@ -1017,6 +1186,8 @@ class GameClient {
         }
       case MessageType.officePhoto:
         _mergePhoto(OfficePhoto.fromJson(msg.payload));
+      case MessageType.officePhotoPatch:
+        _mergePhotoPatch(msg.payload);
       case MessageType.error:
         final message = msg.payload['message'] as String? ?? 'Ошибка';
         if (!_errorController.isClosed) {
@@ -1033,9 +1204,17 @@ class GameClient {
       for (final p in _state?.officePhotos ?? []) p.id: p,
     };
     final mergedPhotos = incoming.officePhotos.map<OfficePhoto>((p) {
-      if (p.hasImage) return p;
       final cached = oldPhotos[p.id];
-      if (cached != null && cached.hasImage) return cached;
+      if (p.hasImage) return p;
+      if (cached != null && cached.hasImage) {
+        return p.copyWith(
+          imageBase64: cached.imageBase64,
+          strokes: p.strokes.isNotEmpty ? p.strokes : cached.strokes,
+          textOverlays: p.textOverlays.isNotEmpty
+              ? p.textOverlays
+              : cached.textOverlays,
+        );
+      }
       return p;
     }).toList();
 
@@ -1057,8 +1236,21 @@ class GameClient {
       );
     } else {
       final photos = List<OfficePhoto>.from(_state!.officePhotos);
-      photos.removeWhere((p) => p.id == photo.id);
-      photos.insert(0, photo);
+      final idx = photos.indexWhere((p) => p.id == photo.id);
+      if (idx >= 0) {
+        final old = photos[idx];
+        photos[idx] = photo.copyWith(
+          imageBase64: photo.hasImage ? photo.imageBase64 : old.imageBase64,
+          strokes: photo.strokes.isNotEmpty ? photo.strokes : old.strokes,
+          textOverlays: photo.textOverlays.isNotEmpty
+              ? photo.textOverlays
+              : old.textOverlays,
+          reactions: photo.reactions.isNotEmpty ? photo.reactions : old.reactions,
+          comments: photo.comments.isNotEmpty ? photo.comments : old.comments,
+        );
+      } else {
+        photos.insert(0, photo);
+      }
       if (photos.length > 12) photos.removeRange(12, photos.length);
       _state = _state!.copyWith(officePhotos: photos);
     }
@@ -1067,11 +1259,52 @@ class GameClient {
     }
   }
 
-  void completeTask({required bool success}) {
+  void _mergePhotoPatch(Map<String, dynamic> payload) {
+    final id = payload['id'] as String?;
+    if (id == null || _state == null) return;
+
+    final photos = List<OfficePhoto>.from(_state!.officePhotos);
+    final idx = photos.indexWhere((p) => p.id == id);
+    if (idx < 0) return;
+
+    final reactionsJson = payload['reactions'] as List<dynamic>?;
+    final commentsJson = payload['comments'] as List<dynamic>?;
+
+    photos[idx] = photos[idx].copyWith(
+      reactions: reactionsJson
+          ?.map((e) => PhotoReaction.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      comments: commentsJson
+          ?.map((e) => PhotoComment.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+    _state = _state!.copyWith(officePhotos: photos);
+    if (!_stateController.isClosed) {
+      _stateController.add(_state!);
+    }
+  }
+
+  void toggleOfficePhotoReaction(String photoId, String emoji) {
+    _send(NetworkMessage(
+      type: MessageType.officePhotoReaction,
+      senderId: playerId,
+      payload: {'photoId': photoId, 'emoji': emoji},
+    ));
+  }
+
+  void addOfficePhotoComment(String photoId, String text) {
+    _send(NetworkMessage(
+      type: MessageType.officePhotoComment,
+      senderId: playerId,
+      payload: {'photoId': photoId, 'text': text},
+    ));
+  }
+
+  void respondToTask({required bool accepted}) {
     _send(NetworkMessage(
       type: MessageType.completeTask,
       senderId: playerId,
-      payload: {'success': success},
+      payload: {'accepted': accepted},
     ));
   }
 
@@ -1106,6 +1339,7 @@ class GameClient {
   void postOfficePhoto({
     required String imageBase64,
     required List<DrawStroke> strokes,
+    List<PhotoTextOverlay> textOverlays = const [],
     String? caption,
   }) {
     final id = const Uuid().v4();
@@ -1116,6 +1350,7 @@ class GameClient {
       imageBase64: imageBase64,
       createdAt: DateTime.now(),
       strokes: strokes,
+      textOverlays: textOverlays,
       caption: caption,
     ));
     _send(NetworkMessage(
@@ -1125,6 +1360,7 @@ class GameClient {
         'id': id,
         'imageBase64': imageBase64,
         'strokes': strokes.map((s) => s.toJson()).toList(),
+        'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
         if (caption != null) 'caption': caption,
       },
     ));

@@ -19,6 +19,11 @@ import '../widgets/prank_overlay.dart';
 import '../widgets/shop_panel.dart';
 import '../widgets/unread_indicator.dart';
 
+bool _needsBossTaskResolution(PlayerModel p) =>
+    (p.taskStatus == TaskStatus.awaitingBoss ||
+        p.taskStatus == TaskStatus.refused) &&
+    p.currentTaskId != null;
+
 class GameScreen extends StatefulWidget {
   const GameScreen._({
     required this.isBoss,
@@ -204,8 +209,13 @@ class _GameScreenState extends State<GameScreen>
                               ),
                               OfficePanel(
                                 state: state,
+                                stateStream: _stateStream,
                                 officeReadAt: _officeReadAt,
                                 onAddPhoto: () => _addOfficePhoto(context),
+                                onToggleReaction: (photoId, emoji) =>
+                                    widget.server!.toggleOfficePhotoReaction(photoId, emoji),
+                                onAddComment: (photoId, text) =>
+                                    widget.server!.addOfficePhotoComment(photoId, text),
                               ),
                               EventFeed(
                                 events: state.events,
@@ -238,8 +248,13 @@ class _GameScreenState extends State<GameScreen>
                               ),
                               OfficePanel(
                                 state: state,
+                                stateStream: _stateStream,
                                 officeReadAt: _officeReadAt,
                                 onAddPhoto: () => _addOfficePhoto(context),
+                                onToggleReaction: (photoId, emoji) =>
+                                    widget.client!.toggleOfficePhotoReaction(photoId, emoji),
+                                onAddComment: (photoId, text) =>
+                                    widget.client!.addOfficePhotoComment(photoId, text),
                               ),
                               EventFeed(
                                 events: state.events,
@@ -368,10 +383,15 @@ class _GameScreenState extends State<GameScreen>
 
   bool _hasUnreadBossTasks(GameState state) {
     final readAt = _tasksTabReadAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final hasPending = state.subordinates.any(_needsBossTaskResolution);
+    if (hasPending) return true;
     return state.events.any(
       (e) =>
           e.timestamp.isAfter(readAt) &&
-          (e.emoji == '✅' || e.emoji == '❌' || e.message.contains('выполнил') || e.message.contains('провалил')),
+          (e.emoji == '✋' ||
+              e.emoji == '🙅' ||
+              e.message.contains('согласился') ||
+              e.message.contains('отказался')),
     );
   }
 
@@ -679,7 +699,7 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _BossPayTab extends StatelessWidget {
+class _BossPayTab extends StatefulWidget {
   const _BossPayTab({
     required this.state,
     required this.server,
@@ -690,61 +710,198 @@ class _BossPayTab extends StatelessWidget {
   final GameServer server;
   final Set<String> knownSubordinateIds;
 
-  bool get _hasNewSubordinates =>
-      state.subordinates.any((p) => !knownSubordinateIds.contains(p.id));
+  @override
+  State<_BossPayTab> createState() => _BossPayTabState();
+}
+
+class _BossPayTabState extends State<_BossPayTab> {
+  late final TextEditingController _salaryController;
+  late final TextEditingController _fineController;
+  late final FocusNode _salaryFocus;
+  late final FocusNode _fineFocus;
+  late int _salaryAmount;
+  late int _fineAmount;
+
+  bool get _hasNewSubordinates => widget.state.subordinates
+      .any((p) => !widget.knownSubordinateIds.contains(p.id));
+
+  @override
+  void initState() {
+    super.initState();
+    _salaryAmount = widget.state.defaultSalaryAmount;
+    _fineAmount = widget.state.defaultFineAmount;
+    _salaryController = TextEditingController(text: '$_salaryAmount');
+    _fineController = TextEditingController(text: '$_fineAmount');
+    _salaryFocus = FocusNode();
+    _fineFocus = FocusNode();
+    _salaryController.addListener(_syncAmountsFromFields);
+    _fineController.addListener(_syncAmountsFromFields);
+  }
+
+  @override
+  void didUpdateWidget(_BossPayTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_salaryFocus.hasFocus &&
+        widget.state.defaultSalaryAmount != _salaryAmount) {
+      _salaryAmount = widget.state.defaultSalaryAmount;
+      _salaryController.text = '$_salaryAmount';
+    }
+    if (!_fineFocus.hasFocus &&
+        widget.state.defaultFineAmount != _fineAmount) {
+      _fineAmount = widget.state.defaultFineAmount;
+      _fineController.text = '$_fineAmount';
+    }
+  }
+
+  @override
+  void dispose() {
+    _salaryController.removeListener(_syncAmountsFromFields);
+    _fineController.removeListener(_syncAmountsFromFields);
+    _salaryController.dispose();
+    _fineController.dispose();
+    _salaryFocus.dispose();
+    _fineFocus.dispose();
+    super.dispose();
+  }
+
+  void _dismissKeyboard() {
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  void _syncAmountsFromFields() {
+    final salaryParsed = int.tryParse(_salaryController.text.trim());
+    final fineParsed = int.tryParse(_fineController.text.trim());
+
+    final nextSalary = salaryParsed ?? _salaryAmount;
+    final nextFine = fineParsed ?? _fineAmount;
+    if (nextSalary == _salaryAmount && nextFine == _fineAmount) return;
+
+    setState(() {
+      if (salaryParsed != null) _salaryAmount = salaryParsed;
+      if (fineParsed != null) _fineAmount = fineParsed;
+    });
+
+    widget.server.setPayDefaults(
+      salaryAmount: salaryParsed ?? _salaryAmount,
+      fineAmount: fineParsed ?? _fineAmount,
+    );
+  }
+
+  void _commitFieldAndDismiss() {
+    _syncAmountsFromFields();
+    _dismissKeyboard();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: AppTheme.glassCard(borderColor: AppTheme.gold),
-          child: Column(
-            children: [
-              const Text('💸', style: TextStyle(fontSize: 48)),
-              const SizedBox(height: 8),
-              const Text(
-                'Заплатить деньги',
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Зарплата приходит ТОЛЬКО когда ты нажмёшь.\n'
-                'Каждый раз +${GameConstants.salaryAmount}₽. Как в мечтах... нет, в офисе.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.6), height: 1.4),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: state.isPlaying ? () => server.paySalary() : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.gold,
-                    foregroundColor: AppTheme.darkBg,
-                    minimumSize: const Size.fromHeight(56),
-                  ),
-                  child: const Text('💰 ЗАПЛАТИТЬ ВСЕМ'),
+    final state = widget.state;
+    final playing = state.isPlaying;
+
+    return GestureDetector(
+      onTap: _dismissKeyboard,
+      behavior: HitTestBehavior.translucent,
+      child: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: AppTheme.glassCard(borderColor: AppTheme.gold),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Row(
+                  children: [
+                    Text('💸', style: TextStyle(fontSize: 32)),
+                    SizedBox(width: 10),
+                    Text(
+                      'Выплаты',
+                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _salaryController,
+                        focusNode: _salaryFocus,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.done,
+                        decoration: const InputDecoration(
+                          labelText: 'Зарплата',
+                          suffixText: '₽',
+                        ),
+                        onEditingComplete: _commitFieldAndDismiss,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _fineController,
+                        focusNode: _fineFocus,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.done,
+                        decoration: const InputDecoration(
+                          labelText: 'Штраф',
+                          suffixText: '₽',
+                        ),
+                        onEditingComplete: _commitFieldAndDismiss,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _PayAmountButton(
+                  label: 'Всем',
+                  amount: _salaryAmount,
+                  isPay: true,
+                  height: 48,
+                  backgroundColor: AppTheme.gold,
+                  foregroundColor: AppTheme.darkBg,
+                  onPressed: playing && _salaryAmount > 0
+                      ? () {
+                          _dismissKeyboard();
+                          widget.server.paySalary();
+                        }
+                      : null,
+                ),
+              ],
+            ),
           ),
-        ).animate().fadeIn().scale(begin: const Offset(0.95, 0.95)),
-        const SizedBox(height: 24),
-        UnreadSectionHeader(
-          title: 'Индивидуально',
-          hasUnread: _hasNewSubordinates,
-        ),
-        const SizedBox(height: 12),
-        ...state.subordinates.map((p) => _PlayerPayCard(
+          const SizedBox(height: 20),
+          UnreadSectionHeader(
+            title: 'Сотрудники',
+            hasUnread: _hasNewSubordinates,
+          ),
+          const SizedBox(height: 12),
+          ...state.subordinates.map(
+            (p) => _PlayerPayCard(
               player: p,
-              isNew: !knownSubordinateIds.contains(p.id),
-              onPay: state.isPlaying ? () => server.paySalary(playerId: p.id) : null,
-              onFine: (amount) => server.finePlayer(playerId: p.id, amount: amount),
-            )),
-      ],
+              isNew: !widget.knownSubordinateIds.contains(p.id),
+              salaryAmount: _salaryAmount,
+              fineAmount: _fineAmount,
+              onPay: playing && _salaryAmount > 0
+                  ? () {
+                      _dismissKeyboard();
+                      widget.server.paySalary(playerId: p.id);
+                    }
+                  : null,
+              onFine: playing && _fineAmount > 0
+                  ? () {
+                      _dismissKeyboard();
+                      widget.server.finePlayer(
+                        playerId: p.id,
+                        amount: _fineAmount,
+                      );
+                    }
+                  : null,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -752,14 +909,18 @@ class _BossPayTab extends StatelessWidget {
 class _PlayerPayCard extends StatelessWidget {
   const _PlayerPayCard({
     required this.player,
+    required this.salaryAmount,
+    required this.fineAmount,
     required this.onPay,
     required this.onFine,
     this.isNew = false,
   });
 
   final PlayerModel player;
+  final int salaryAmount;
+  final int fineAmount;
   final VoidCallback? onPay;
-  final void Function(int amount) onFine;
+  final VoidCallback? onFine;
   final bool isNew;
 
   @override
@@ -808,17 +969,26 @@ class _PlayerPayCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: ElevatedButton(
+                child: _PayAmountButton(
+                  label: 'Зарплата',
+                  amount: salaryAmount,
+                  isPay: true,
+                  backgroundColor: AppTheme.slaveTeal,
+                  foregroundColor: AppTheme.darkBg,
                   onPressed: onPay,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.slaveTeal,
-                    foregroundColor: AppTheme.darkBg,
-                  ),
-                  child: const Text('Заплатить'),
                 ),
               ),
               const SizedBox(width: 8),
-              _FineButton(onFine: onFine),
+              Expanded(
+                child: _PayAmountButton(
+                  label: 'Штраф',
+                  amount: fineAmount,
+                  isPay: false,
+                  backgroundColor: AppTheme.accentPink.withValues(alpha: 0.85),
+                  foregroundColor: Colors.white,
+                  onPressed: onFine,
+                ),
+              ),
             ],
           ),
         ],
@@ -827,29 +997,83 @@ class _PlayerPayCard extends StatelessWidget {
   }
 }
 
-class _FineButton extends StatelessWidget {
-  const _FineButton({required this.onFine});
+String _formatMoneyAmount(int value) {
+  final digits = value.abs().toString();
+  final buffer = StringBuffer();
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) {
+      buffer.write(' ');
+    }
+    buffer.write(digits[i]);
+  }
+  return buffer.toString();
+}
 
-  final void Function(int amount) onFine;
+class _PayAmountButton extends StatelessWidget {
+  const _PayAmountButton({
+    required this.label,
+    required this.amount,
+    required this.isPay,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.onPressed,
+    this.height = 52,
+  });
+
+  final String label;
+  final int amount;
+  final bool isPay;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final VoidCallback? onPressed;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<int>(
-      onSelected: onFine,
-      icon: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: AppTheme.accentPink.withValues(alpha: 0.2),
-          borderRadius: BorderRadius.circular(12),
+    final sign = isPay ? '+' : '−';
+    final amountLine = '$sign${_formatMoneyAmount(amount)} ₽';
+
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor,
+          foregroundColor: foregroundColor,
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        child: const Icon(Icons.gavel, color: AppTheme.accentPink, size: 20),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: foregroundColor.withValues(alpha: 0.85),
+              ),
+            ),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                amountLine,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: foregroundColor,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-      itemBuilder: (_) => [
-        const PopupMenuItem(value: 500, child: Text('Штраф 500₽')),
-        const PopupMenuItem(value: 1000, child: Text('Штраф 1000₽')),
-        const PopupMenuItem(value: 2500, child: Text('Штраф 2500₽')),
-        const PopupMenuItem(value: 5000, child: Text('Штраф 5000₽ «за attitude»')),
-      ],
     );
   }
 }
@@ -975,12 +1199,51 @@ class _BossTasksTabState extends State<_BossTasksTab> {
   Widget _buildEmployeeStep() {
     final subs = widget.state.subordinates;
 
+    final pendingResolve = subs.where(_needsBossTaskResolution).toList();
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (pendingResolve.isNotEmpty) ...[
+          UnreadSectionHeader(
+            title: 'Решите по заданиям',
+            hasUnread: widget.hasUnread,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Выплатить, не платить или оштрафовать',
+            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5)),
+          ),
+          const SizedBox(height: 12),
+          ...pendingResolve.map((p) {
+            final task = widget.state.taskById(p.currentTaskId!);
+            if (task == null) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _BossTaskResolveCard(
+                playerName: p.name,
+                task: task,
+                refused: p.taskStatus == TaskStatus.refused,
+                onPay: () => widget.server.resolveTask(
+                  playerId: p.id,
+                  decision: BossTaskDecision.pay,
+                ),
+                onSkip: () => widget.server.resolveTask(
+                  playerId: p.id,
+                  decision: BossTaskDecision.skip,
+                ),
+                onFine: () => widget.server.resolveTask(
+                  playerId: p.id,
+                  decision: BossTaskDecision.fine,
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 20),
+        ],
         UnreadSectionHeader(
           title: 'Шаг 1: Кому задание?',
-          hasUnread: widget.hasUnread,
+          hasUnread: widget.hasUnread && pendingResolve.isEmpty,
         ),
         const SizedBox(height: 8),
         Text(
@@ -1007,15 +1270,22 @@ class _BossTasksTabState extends State<_BossTasksTab> {
           const SizedBox(height: 10),
           ...subs.map((p) {
             final active = widget.state.taskById(p.currentTaskId);
+            final subtitle = switch (p.taskStatus) {
+              TaskStatus.active when active != null =>
+                'Ждёт ответа: ${active.title}',
+              TaskStatus.awaitingBoss when active != null =>
+                'Согласился: ${active.title} — ваше решение',
+              TaskStatus.refused when active != null =>
+                'Отказался: ${active.title} — ваше решение',
+              _ => 'Свободен • ${p.balance}₽',
+            };
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: _EmployeePickCard(
                 emoji: '🐑',
                 name: p.name,
-                subtitle: active != null
-                    ? 'Активно: ${active.title}'
-                    : 'Свободен • ${p.balance}₽',
-                highlight: active != null,
+                subtitle: subtitle,
+                highlight: p.taskStatus != TaskStatus.none,
                 onTap: () => _selectTarget(p.id),
               ),
             );
@@ -1280,73 +1550,233 @@ class _SubordinateTaskBar extends StatelessWidget {
     return GestureDetector(
       onTap: onMarkRead,
       child: Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.cardBg,
-        border: Border(
-          top: BorderSide(
-            color: hasUnread
-                ? Colors.red.shade400
-                : AppTheme.accentOrange.withValues(alpha: 0.3),
-            width: hasUnread ? 2 : 1,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.cardBg,
+          border: Border(
+            top: BorderSide(
+              color: hasUnread
+                  ? Colors.red.shade400
+                  : AppTheme.accentOrange.withValues(alpha: 0.3),
+              width: hasUnread ? 2 : 1,
+            ),
           ),
         ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '📋 ${task.title}',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                if (hasUnread) const UnreadBadge(),
+              ],
+            ),
+            Text(
+              task.description,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.6),
+              ),
+            ),
+            Text(
+              'Награда при одобрении босса: ${task.reward}₽',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: 0.45),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      onMarkRead();
+                      client.respondToTask(accepted: true);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.slaveTeal,
+                      foregroundColor: AppTheme.darkBg,
+                    ),
+                    child: const Text('Согласен'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      onMarkRead();
+                      client.respondToTask(accepted: false);
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.accentPink,
+                      side: const BorderSide(color: AppTheme.accentPink),
+                    ),
+                    child: const Text('Отказаться'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ).animate().slideY(begin: 1, duration: 300.ms);
+  }
+}
+
+class _BossTaskResolveCard extends StatelessWidget {
+  const _BossTaskResolveCard({
+    required this.playerName,
+    required this.task,
+    required this.refused,
+    required this.onPay,
+    required this.onSkip,
+    required this.onFine,
+  });
+
+  final String playerName;
+  final BossTask task;
+  final bool refused;
+  final VoidCallback onPay;
+  final VoidCallback onSkip;
+  final VoidCallback onFine;
+
+  static const _btnHeight = 52.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.glassCard(
+        borderColor: AppTheme.gold.withValues(alpha: 0.45),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '📋 ${task.title}',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              if (hasUnread) const UnreadBadge(),
-            ],
+          Text(
+            '$playerName — ${task.title}',
+            style: const TextStyle(fontWeight: FontWeight.w800),
           ),
+          const SizedBox(height: 4),
+          Text(
+            refused ? 'Отказался выполнять' : 'Согласился выполнять',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: refused
+                  ? AppTheme.accentPink.withValues(alpha: 0.9)
+                  : AppTheme.slaveTeal.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 4),
           Text(
             task.description,
-            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.6)),
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.55),
+            ),
           ),
           const SizedBox(height: 12),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: ElevatedButton(
-                  onPressed: () {
-                    onMarkRead();
-                    client.completeTask(success: true);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.slaveTeal,
-                    foregroundColor: AppTheme.darkBg,
-                  ),
-                  child: Text('Готово (+${task.reward}₽)'),
+                child: _ResolveActionButton(
+                  height: _btnHeight,
+                  label: 'Выплатить\n${task.reward}₽',
+                  backgroundColor: AppTheme.gold,
+                  foregroundColor: AppTheme.darkBg,
+                  onPressed: onPay,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    onMarkRead();
-                    client.completeTask(success: false);
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.accentPink,
-                    side: const BorderSide(color: AppTheme.accentPink),
-                  ),
-                  child: Text('Провал (−${task.penalty}₽)'),
+                child: _ResolveActionButton(
+                  height: _btnHeight,
+                  label: 'Не\nплатить',
+                  backgroundColor: Colors.white.withValues(alpha: 0.12),
+                  foregroundColor: Colors.white,
+                  border: Border.all(color: Colors.white38),
+                  onPressed: onSkip,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _ResolveActionButton(
+                  height: _btnHeight,
+                  label: 'Штраф\n${task.penalty}₽',
+                  backgroundColor: AppTheme.accentPink.withValues(alpha: 0.85),
+                  foregroundColor: Colors.white,
+                  onPressed: onFine,
                 ),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ResolveActionButton extends StatelessWidget {
+  const _ResolveActionButton({
+    required this.height,
+    required this.label,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.onPressed,
+    this.border,
+  });
+
+  final double height;
+  final String label;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final VoidCallback onPressed;
+  final Border? border;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: height,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(8),
+          child: Ink(
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(8),
+              border: border,
+            ),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: foregroundColor,
+                    height: 1.15,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
-    ).animate().slideY(begin: 1, duration: 300.ms);
+    );
   }
 }
 

@@ -22,7 +22,6 @@ class _JoinScreenState extends State<JoinScreen> {
   String? _error;
   List<DiscoveredRoom> _rooms = [];
   SavedPlayerSession? _savedSession;
-  bool _rejoining = false;
 
   @override
   void initState() {
@@ -34,12 +33,10 @@ class _JoinScreenState extends State<JoinScreen> {
   Future<void> _loadSavedSession() async {
     final saved = await SavedSessionService.load();
     if (!mounted) return;
-    setState(() {
-      _savedSession = saved;
-      if (saved != null && _nameController.text == 'Сотрудник') {
-        _nameController.text = saved.playerName;
-      }
-    });
+    _savedSession = saved;
+    if (saved != null && _nameController.text == 'Сотрудник') {
+      _nameController.text = saved.playerName;
+    }
   }
 
   @override
@@ -160,48 +157,6 @@ class _JoinScreenState extends State<JoinScreen> {
     }
   }
 
-  Future<void> _rejoinSaved() async {
-    final saved = _savedSession;
-    if (saved == null) return;
-
-    setState(() {
-      _error = null;
-      _rejoining = true;
-    });
-
-    final client = GameClient(playerName: saved.playerName);
-    final ok = await client.rejoinSaved(saved);
-    if (!ok) {
-      await client.dispose();
-      if (mounted) {
-        setState(() {
-          _rejoining = false;
-          _error = 'Не удалось вернуться. Комната закрыта или босс вышел.';
-        });
-      }
-      return;
-    }
-
-    if (!await _waitForGame(client)) {
-      if (mounted) setState(() => _rejoining = false);
-      return;
-    }
-
-    await _client?.dispose();
-
-    if (!mounted) {
-      await client.dispose();
-      return;
-    }
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => GameScreen.subordinate(client: client),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -242,45 +197,6 @@ class _JoinScreenState extends State<JoinScreen> {
                     prefixIcon: Icon(Icons.badge),
                   ),
                 ),
-                if (_savedSession != null) ...[
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: AppTheme.glassCard(borderColor: AppTheme.slaveTeal),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          '🔄 Вернуться в «${_savedSession!.roomName}»',
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Как ${_savedSession!.playerName} • ${_savedSession!.roomHost}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white.withValues(alpha: 0.5),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        ElevatedButton(
-                          onPressed: _rejoining ? null : _rejoinSaved,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.slaveTeal,
-                            foregroundColor: AppTheme.darkBg,
-                          ),
-                          child: _rejoining
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Text('Продолжить игру'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 24),
                 Row(
                   children: [
