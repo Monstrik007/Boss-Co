@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/game_models.dart';
 import '../theme/app_theme.dart';
+import 'player_identity.dart';
 import '../widgets/unread_indicator.dart';
 
 typedef SendChat = void Function({String? toId, required String text, bool broadcast});
@@ -71,12 +72,14 @@ class _ChatPanelState extends State<ChatPanel> {
       result.add(_Conversation(
         id: '__broadcast__',
         name: '📢 Всем сотрудникам',
+        subtitle: 'Босс',
         isBroadcast: true,
       ));
     } else if (widget.state.boss != null) {
       result.add(_Conversation(
         id: '__broadcast__',
         name: '📢 ${widget.state.hostName} — всем',
+        subtitle: 'Босс',
         isBroadcast: true,
       ));
     }
@@ -85,7 +88,8 @@ class _ChatPanelState extends State<ChatPanel> {
       if (p.id == myId) continue;
       result.add(_Conversation(
         id: p.id,
-        name: '${p.isBoss ? '👑' : '🐑'} ${p.name}',
+        name: '${p.displayEmoji} ${p.name}',
+        subtitle: p.rankLabel,
       ));
     }
     return result;
@@ -137,8 +141,14 @@ class _ChatPanelState extends State<ChatPanel> {
         state: widget.state,
         partnerId: _broadcastMode ? '__broadcast__' : _partnerId!,
         partnerName: _broadcastMode
-            ? (widget.isBoss ? '📢 Всем' : '📢 ${widget.state.hostName}')
-            : widget.state.players.firstWhere((p) => p.id == _partnerId).name,
+            ? (widget.isBoss
+                ? '📢 Всем · Босс'
+                : '📢 ${widget.state.hostName} · Босс')
+            : () {
+                final p = widget.state.players
+                    .firstWhere((pl) => pl.id == _partnerId);
+                return '${p.displayEmoji} ${p.name} · ${p.rankLabel}';
+              }(),
         controller: _controller,
         onSend: _send,
         onBack: _backToList,
@@ -189,14 +199,30 @@ class _ChatPanelState extends State<ChatPanel> {
                   if (unread) const UnreadBadge(),
                 ],
               ),
-              subtitle: Text(
-                _previewFor(conv) ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: unread ? 0.7 : 0.45),
-                ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (conv.subtitle != null) ...[
+                    Text(
+                      conv.subtitle!,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.slaveTeal.withValues(alpha: 0.8),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                  ],
+                  Text(
+                    _previewFor(conv) ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: unread ? 0.7 : 0.45),
+                    ),
+                  ),
+                ],
               ),
               trailing: const Icon(Icons.chevron_right, color: Colors.white38),
             ),
@@ -211,11 +237,13 @@ class _Conversation {
   _Conversation({
     required this.id,
     required this.name,
+    this.subtitle,
     this.isBroadcast = false,
   });
 
   final String id;
   final String name;
+  final String? subtitle;
   final bool isBroadcast;
 }
 

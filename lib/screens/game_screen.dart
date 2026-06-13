@@ -18,6 +18,7 @@ import '../widgets/photo_draw_screen.dart';
 import '../widgets/prank_overlay.dart';
 import '../widgets/shop_panel.dart';
 import '../widgets/unread_indicator.dart';
+import '../widgets/player_identity.dart';
 
 bool _needsBossTaskResolution(PlayerModel p) =>
     (p.taskStatus == TaskStatus.awaitingBoss ||
@@ -211,6 +212,13 @@ class _GameScreenState extends State<GameScreen>
                                 state: state,
                                 stateStream: _stateStream,
                                 officeReadAt: _officeReadAt,
+                                isPlaying: canPlay,
+                                onPromote: canPlay
+                                    ? (id) => widget.server!.promotePlayer(id)
+                                    : null,
+                                onDemote: canPlay
+                                    ? (id) => widget.server!.demotePlayer(id)
+                                    : null,
                                 onAddPhoto: () => _addOfficePhoto(context),
                                 onToggleReaction: (photoId, emoji) =>
                                     widget.server!.toggleOfficePhotoReaction(photoId, emoji),
@@ -250,6 +258,27 @@ class _GameScreenState extends State<GameScreen>
                                 state: state,
                                 stateStream: _stateStream,
                                 officeReadAt: _officeReadAt,
+                                isPlaying: canPlay,
+                                onPaySubordinate: canPlay
+                                    ? (id) => widget.client!.payMemberSalary(id)
+                                    : null,
+                                onAssignPreset: canPlay
+                                    ? (id, taskId) =>
+                                        widget.client!.assignTaskTo(
+                                          targetId: id,
+                                          taskId: taskId,
+                                        )
+                                    : null,
+                                onAssignCustom: canPlay
+                                    ? (id, title, desc, reward, penalty) =>
+                                        widget.client!.assignCustomTaskTo(
+                                          targetId: id,
+                                          title: title,
+                                          description: desc,
+                                          reward: reward,
+                                          penalty: penalty,
+                                        )
+                                    : null,
                                 onAddPhoto: () => _addOfficePhoto(context),
                                 onToggleReaction: (photoId, emoji) =>
                                     widget.client!.toggleOfficePhotoReaction(photoId, emoji),
@@ -652,7 +681,9 @@ class _Header extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 Text(
-                  isBoss ? '👑 ${state.hostName}' : '🐑 ${local?.name ?? "..."}',
+                  isBoss
+                      ? '👑 ${state.hostName} · Босс'
+                      : '${local?.displayEmoji ?? '🐑'} ${local?.name ?? "..."} · ${local?.rankLabel ?? "Стажёр"}',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.white.withValues(alpha: 0.6),
@@ -934,36 +965,25 @@ class _PlayerPayCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Text('🐑', style: TextStyle(fontSize: 28)),
+              Text(player.displayEmoji, style: const TextStyle(fontSize: 28)),
               const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            player.name,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        if (isNew) ...[
-                          const SizedBox(width: 8),
-                          const UnreadBadge(),
-                        ],
-                      ],
-                    ),
-                    Text(
-                      player.isConnected
-                          ? 'Баланс: ${player.balance}₽ • Прогресс: ${player.progress}%'
-                          : 'Баланс: ${player.balance}₽ • 📴 офлайн (может вернуться)',
-                      style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5)),
-                    ),
-                  ],
+                child: PlayerNameWithRank(
+                  player: player,
+                  trailing: isNew ? const UnreadBadge() : null,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 38),
+            child: Text(
+              player.isConnected
+                  ? 'Баланс: ${player.balance}₽ • Прогресс: ${player.progress}%'
+                  : 'Баланс: ${player.balance}₽ • 📴 офлайн (может вернуться)',
+              style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5)),
+            ),
           ),
           const SizedBox(height: 12),
           Row(
@@ -1120,7 +1140,7 @@ class _BossTasksTabState extends State<_BossTasksTab> {
       return 'всем ($n ${_plural(n, 'сотрудник', 'сотрудника', 'сотрудников')})';
     }
     final p = widget.state.subordinates.firstWhere((s) => s.id == _selectedId);
-    return p.name;
+    return '${p.name} · ${p.rankLabel}';
   }
 
   String _plural(int n, String one, String few, String many) {
@@ -1221,7 +1241,7 @@ class _BossTasksTabState extends State<_BossTasksTab> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: _BossTaskResolveCard(
-                playerName: p.name,
+                player: p,
                 task: task,
                 refused: p.taskStatus == TaskStatus.refused,
                 onPay: () => widget.server.resolveTask(
@@ -1282,8 +1302,9 @@ class _BossTasksTabState extends State<_BossTasksTab> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: _EmployeePickCard(
-                emoji: '🐑',
+                emoji: p.displayEmoji,
                 name: p.name,
+                rank: p.rankLabel,
                 subtitle: subtitle,
                 highlight: p.taskStatus != TaskStatus.none,
                 onTap: () => _selectTarget(p.id),
@@ -1418,6 +1439,7 @@ class _EmployeePickCard extends StatelessWidget {
     required this.name,
     required this.subtitle,
     required this.onTap,
+    this.rank,
     this.highlight = false,
   });
 
@@ -1425,6 +1447,7 @@ class _EmployeePickCard extends StatelessWidget {
   final String name;
   final String subtitle;
   final VoidCallback onTap;
+  final String? rank;
   final bool highlight;
 
   @override
@@ -1448,6 +1471,18 @@ class _EmployeePickCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    if (rank != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        rank!,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.slaveTeal.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 2),
                     Text(
                       subtitle,
                       style: TextStyle(
@@ -1632,7 +1667,7 @@ class _SubordinateTaskBar extends StatelessWidget {
 
 class _BossTaskResolveCard extends StatelessWidget {
   const _BossTaskResolveCard({
-    required this.playerName,
+    required this.player,
     required this.task,
     required this.refused,
     required this.onPay,
@@ -1640,7 +1675,7 @@ class _BossTaskResolveCard extends StatelessWidget {
     required this.onFine,
   });
 
-  final String playerName;
+  final PlayerModel player;
   final BossTask task;
   final bool refused;
   final VoidCallback onPay;
@@ -1660,8 +1695,17 @@ class _BossTaskResolveCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '$playerName — ${task.title}',
+            '${player.name} — ${task.title}',
             style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            player.rankLabel,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.slaveTeal.withValues(alpha: 0.85),
+            ),
           ),
           const SizedBox(height: 4),
           Text(

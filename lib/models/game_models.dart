@@ -459,6 +459,19 @@ class ChatMessage {
       );
 }
 
+/// Должность в офисе (уровень 0…maxRankLevel).
+class OfficeRank {
+  const OfficeRank({
+    required this.level,
+    required this.title,
+    required this.emoji,
+  });
+
+  final int level;
+  final String title;
+  final String emoji;
+}
+
 class PlayerModel {
   PlayerModel({
     required this.id,
@@ -467,10 +480,14 @@ class PlayerModel {
     this.balance = 0,
     List<String>? ownedItems,
     this.currentTaskId,
+    this.taskAssignedById,
     this.taskStatus = TaskStatus.none,
     List<String>? usedPranks,
     this.isConnected = true,
     required this.sessionToken,
+    this.rankLevel = 0,
+    this.honorScore = 0,
+    this.shameScore = 0,
   })  : ownedItems = ownedItems ?? [],
         usedPranks = usedPranks ?? [];
 
@@ -480,12 +497,18 @@ class PlayerModel {
   int balance;
   final List<String> ownedItems;
   String? currentTaskId;
+  String? taskAssignedById;
   TaskStatus taskStatus;
   final List<String> usedPranks;
   bool isConnected;
   final String sessionToken;
+  int rankLevel;
+  int honorScore;
+  int shameScore;
 
   bool get isBoss => role == PlayerRole.boss;
+
+  OfficeRank get officeRank => GameContent.rankForLevel(rankLevel);
 
   int get progress =>
       ownedItems.length * 100 ~/ GameContent.allItems.length;
@@ -499,10 +522,14 @@ class PlayerModel {
         'balance': balance,
         'ownedItems': ownedItems,
         'currentTaskId': currentTaskId,
+        'taskAssignedById': taskAssignedById,
         'taskStatus': taskStatus.name,
         'usedPranks': usedPranks,
         'isConnected': isConnected,
         'sessionToken': sessionToken,
+        'rankLevel': rankLevel,
+        'honorScore': honorScore,
+        'shameScore': shameScore,
       };
 
   factory PlayerModel.fromJson(Map<String, dynamic> json) => PlayerModel(
@@ -515,6 +542,7 @@ class PlayerModel {
                 .toList() ??
             [],
         currentTaskId: json['currentTaskId'] as String?,
+        taskAssignedById: json['taskAssignedById'] as String?,
         taskStatus: _parseTaskStatus(json['taskStatus'] as String?),
         usedPranks: (json['usedPranks'] as List<dynamic>?)
                 ?.map((e) => e as String)
@@ -522,6 +550,9 @@ class PlayerModel {
             [],
         isConnected: json['isConnected'] as bool? ?? true,
         sessionToken: json['sessionToken'] as String? ?? '',
+        rankLevel: (json['rankLevel'] as num?)?.toInt() ?? 0,
+        honorScore: (json['honorScore'] as num?)?.toInt() ?? 0,
+        shameScore: (json['shameScore'] as num?)?.toInt() ?? 0,
       );
 
   PlayerModel copyWith({
@@ -529,10 +560,14 @@ class PlayerModel {
     int? balance,
     List<String>? ownedItems,
     String? currentTaskId,
+    String? taskAssignedById,
     TaskStatus? taskStatus,
     List<String>? usedPranks,
     bool? isConnected,
     String? sessionToken,
+    int? rankLevel,
+    int? honorScore,
+    int? shameScore,
     bool clearTask = false,
   }) {
     return PlayerModel(
@@ -542,10 +577,15 @@ class PlayerModel {
       balance: balance ?? this.balance,
       ownedItems: ownedItems ?? List.from(this.ownedItems),
       currentTaskId: clearTask ? null : (currentTaskId ?? this.currentTaskId),
+      taskAssignedById:
+          clearTask ? null : (taskAssignedById ?? this.taskAssignedById),
       taskStatus: clearTask ? TaskStatus.none : (taskStatus ?? this.taskStatus),
       usedPranks: usedPranks ?? List.from(this.usedPranks),
       isConnected: isConnected ?? this.isConnected,
       sessionToken: sessionToken ?? this.sessionToken,
+      rankLevel: rankLevel ?? this.rankLevel,
+      honorScore: honorScore ?? this.honorScore,
+      shameScore: shameScore ?? this.shameScore,
     );
   }
 }
@@ -763,6 +803,32 @@ class GameState {
 }
 
 class GameContent {
+  static const officeRanks = [
+    OfficeRank(level: 0, title: 'Стажёр', emoji: '🌱'),
+    OfficeRank(level: 1, title: 'Специалист', emoji: '⭐'),
+    OfficeRank(level: 2, title: 'Старший', emoji: '🎖️'),
+    OfficeRank(level: 3, title: 'Руководитель', emoji: '💼'),
+  ];
+
+  static OfficeRank rankForLevel(int level) {
+    final idx = level.clamp(0, GameConstants.maxRankLevel);
+    return officeRanks[idx];
+  }
+
+  static bool canManage(PlayerModel manager, PlayerModel target) {
+    if (target.isBoss) return false;
+    if (manager.isBoss) return true;
+    return manager.rankLevel > target.rankLevel;
+  }
+
+  static const quickAssignTasks = [
+    'water',
+    'compliment_boss',
+    'silent',
+    'dance',
+    'squat',
+  ];
+
   static const allItems = [
     ShopItem(id: 'pencil', name: 'Карандаш', emoji: '✏️', price: 50, description: 'Чтобы подписать отказ в повышении', tier: 1),
     ShopItem(id: 'eraser', name: 'Ластик', emoji: '🧽', price: 120, description: 'Стирает ошибки. Жаль, зарплату не стирает', tier: 1),

@@ -275,6 +275,10 @@ class GameServer {
         _handleRejoin(client, msg);
       case MessageType.completeTask:
         _handleRespondTask(msg);
+      case MessageType.paySalary:
+        _handlePaySalary(msg);
+      case MessageType.assignTask:
+        _handleAssignTask(msg);
       case MessageType.resolveTask:
         break;
       case MessageType.buyItem:
@@ -442,19 +446,57 @@ class GameServer {
     _pushState();
   }
 
-  void paySalary({String? playerId}) {
+  PlayerModel? _playerById(String? id) {
+    if (id == null) return null;
+    for (final p in _state.players) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
+  bool _canManage(String managerId, String targetId) {
+    final manager = _playerById(managerId);
+    final target = _playerById(targetId);
+    if (manager == null || target == null) return false;
+    return GameContent.canManage(manager, target);
+  }
+
+  void paySalary({String? playerId, String? payerId}) {
     if (_state.phase != GamePhase.playing) return;
+
+    final payer = _playerById(payerId ?? bossPlayerId);
+    if (payer == null) return;
 
     final targets = playerId != null
         ? _state.players.where((p) => p.id == playerId && !p.isBoss).toList()
-        : _state.subordinates;
+        : payer.isBoss
+            ? _state.subordinates
+            : _state.subordinates
+                .where((p) => _canManage(payer.id, p.id))
+                .toList();
 
     if (targets.isEmpty) return;
+
+    for (final target in targets) {
+      if (!_canManage(payer.id, target.id)) return;
+    }
 
     final amount = _state.defaultSalaryAmount;
     if (amount <= 0) return;
 
+    final totalCost = amount * targets.length;
+    if (!payer.isBoss && payer.balance < totalCost) return;
+
     final players = List<PlayerModel>.from(_state.players);
+    final payerIdx = players.indexWhere((p) => p.id == payer.id);
+    if (payerIdx < 0) return;
+
+    if (!payer.isBoss) {
+      players[payerIdx] = players[payerIdx].copyWith(
+        balance: players[payerIdx].balance - totalCost,
+      );
+    }
+
     for (final target in targets) {
       final idx = players.indexWhere((p) => p.id == target.id);
       if (idx >= 0) {
@@ -465,13 +507,143 @@ class GameServer {
     }
     _state = _state.copyWith(players: players);
 
+    if (payer.isBoss) {
+      _addEvent(
+        playerId != null
+            ? '${targets.first.name} получил $amount₽'
+            : 'Зарплата всем: +$amount₽',
+        '💸',
+      );
+    } else {
+      _addEvent(
+        playerId != null
+            ? '${payer.name} выплатил ${targets.first.name} $amount₽'
+            : '${payer.name} выплатил команде $totalCost₽',
+        '💸',
+      );
+    }
+    _pushState();
+  }
+
+  void _handlePaySalary(NetworkMessage msg) {
+    final payerId = msg.senderId;
+    if (payerId == null) return;
+    final targetId = msg.payload['playerId'] as String?;
+    paySalary(playerId: targetId, payerId: payerId);
+  }
+
+  void promotePlayer(String playerId) {
+    if (_state.phase != GamePhase.playing) return;
+    final idx = _state.players.indexWhere((p) => p.id == playerId);
+    if (idx < 0 || _state.players[idx].isBoss) return;
+
+    final player = _state.players[idx];
+    if (player.rankLevel >= GameConstants.maxRankLevel) return;
+
+    final players = List<PlayerModel>.from(_state.players);
+    final next = player.rankLevel + 1;
+    players[idx] = player.copyWith(rankLevel: next);
+    _state = _state.copyWith(players: players);
+
+    final rank = GameContent.rankForLevel(next);
     _addEvent(
-      playerId != null
-          ? '${targets.first.name} получил $amount₽'
-          : 'Зарплата всем: +$amount₽',
-      '💸',
+      '${player.name} повышен до «${rank.title}» ${rank.emoji}',
+      '⬆️',
     );
     _pushState();
+  }
+
+  void demotePlayer(String playerId) {
+    if (_state.phase != GamePhase.playing) return;
+    final idx = _state.players.indexWhere((p) => p.id == playerId);
+    if (idx < 0 || _state.players[idx].isBoss) return;
+
+    final player = _state.players[idx];
+    if (player.rankLevel <= 0) return;
+
+    final players = List<PlayerModel>.from(_state.players);
+    final next = player.rankLevel - 1;
+    players[idx] = player.copyWith(rankLevel: next);
+    _state = _state.copyWith(players: players);
+
+    final rank = GameContent.rankForLevel(next);
+    _addEvent(
+      '${player.name} понижен до «${rank.title}» ${rank.emoji}',
+      '⬇️',
+    );
+    _pushState();
+  }
+
+  bool _assignerCanAffordTask(String assignerId, int reward) {
+    final assigner = _playerById(assignerId);
+    if (assigner == null) return false;
+    if (assigner.isBoss) return true;
+    return assigner.balance >= reward;
+  }
+
+  void assignTask({
+    required String playerId,
+    required String taskId,
+    String? assignedById,
+  }) {
+    if (_state.phase != GamePhase.playing) return;
+    final task = _resolveTask(taskId);
+    if (task == null) return;
+
+    final assignerId = assignedById ?? bossPlayerId;
+    if (assignerId == null || !_canManage(assignerId, playerId)) return;
+    if (!_assignerCanAffordTask(assignerId, task.reward)) return;
+
+    final idx = _state.players.indexWhere((p) => p.id == playerId);
+    if (idx < 0 || _state.players[idx].isBoss) return;
+    if (_state.players[idx].taskStatus != TaskStatus.none) return;
+
+    final assigner = _playerById(assignerId);
+    final players = List<PlayerModel>.from(_state.players);
+    players[idx] = players[idx].copyWith(
+      currentTaskId: taskId,
+      taskStatus: TaskStatus.active,
+      taskAssignedById: assignerId,
+    );
+    _state = _state.copyWith(players: players);
+
+    final targetName = players[idx].name;
+    if (assigner?.isBoss ?? true) {
+      _addEvent('Задание «${task.title}» → $targetName', '📋');
+    } else {
+      _addEvent(
+        '${assigner!.name} назначил «${task.title}» → $targetName',
+        '📋',
+      );
+    }
+    _pushState();
+  }
+
+  void _handleAssignTask(NetworkMessage msg) {
+    final assignerId = msg.senderId;
+    final playerId = msg.payload['playerId'] as String?;
+    if (assignerId == null || playerId == null) return;
+
+    final taskId = msg.payload['taskId'] as String?;
+    if (taskId != null) {
+      assignTask(
+        playerId: playerId,
+        taskId: taskId,
+        assignedById: assignerId,
+      );
+      return;
+    }
+
+    final title = msg.payload['title'] as String?;
+    if (title == null) return;
+    assignCustomTask(
+      playerId: playerId,
+      title: title,
+      description: msg.payload['description'] as String? ?? '',
+      reward: (msg.payload['reward'] as num?)?.toInt() ?? 0,
+      penalty: (msg.payload['penalty'] as num?)?.toInt() ?? 0,
+      assignedById: assignerId,
+    );
   }
 
   void setPayDefaults({required int salaryAmount, required int fineAmount}) {
@@ -482,43 +654,36 @@ class GameServer {
     _pushState();
   }
 
-  void assignTask({required String playerId, required String taskId}) {
-    if (_state.phase != GamePhase.playing) return;
-    final task = _resolveTask(taskId);
-    if (task == null) return;
-
-    final idx = _state.players.indexWhere((p) => p.id == playerId);
-    if (idx < 0 || _state.players[idx].isBoss) return;
-
-    final players = List<PlayerModel>.from(_state.players);
-    players[idx] = players[idx].copyWith(
-      currentTaskId: taskId,
-      taskStatus: TaskStatus.active,
-    );
-    _state = _state.copyWith(players: players);
-    _addEvent('Задание «${task.title}» → ${players[idx].name}', '📋');
-    _pushState();
-  }
-
   void assignCustomTask({
     required String playerId,
     required String title,
     required String description,
     required int reward,
     required int penalty,
+    String? assignedById,
   }) {
     if (_state.phase != GamePhase.playing) return;
     final trimmedTitle = title.trim();
     if (trimmedTitle.isEmpty) return;
 
+    final assignerId = assignedById ?? bossPlayerId;
+    if (assignerId == null || !_canManage(assignerId, playerId)) return;
+
+    final rewardClamped = reward.clamp(0, 999999999);
+    if (!_assignerCanAffordTask(assignerId, rewardClamped)) return;
+
     final idx = _state.players.indexWhere((p) => p.id == playerId);
     if (idx < 0 || _state.players[idx].isBoss) return;
+    if (_state.players[idx].taskStatus != TaskStatus.none) return;
 
+    final assigner = _playerById(assignerId);
     final task = BossTask(
       id: 'custom_${_uuid.v4()}',
       title: trimmedTitle,
-      description: description.trim().isEmpty ? 'Без описания — классика босса' : description.trim(),
-      reward: reward.clamp(0, 999999999),
+      description: description.trim().isEmpty
+          ? 'Без описания — классика босса'
+          : description.trim(),
+      reward: rewardClamped,
       penalty: penalty.clamp(0, 999999999),
     );
 
@@ -526,12 +691,20 @@ class GameServer {
     players[idx] = players[idx].copyWith(
       currentTaskId: task.id,
       taskStatus: TaskStatus.active,
+      taskAssignedById: assignerId,
     );
     _state = _state.copyWith(
       players: players,
       customTasks: [..._state.customTasks, task],
     );
-    _addEvent('Своё задание «${task.title}» → ${players[idx].name}', '📝');
+    if (assigner?.isBoss ?? true) {
+      _addEvent('Своё задание «${task.title}» → ${players[idx].name}', '📝');
+    } else {
+      _addEvent(
+        '${assigner!.name}: своё задание «${task.title}» → ${players[idx].name}',
+        '📝',
+      );
+    }
     _pushState();
   }
 
@@ -562,13 +735,19 @@ class GameServer {
     final players = List<PlayerModel>.from(_state.players);
     final current = players[idx];
     if (accepted) {
-      players[idx] = current.copyWith(taskStatus: TaskStatus.awaitingBoss);
+      players[idx] = current.copyWith(
+        taskStatus: TaskStatus.awaitingBoss,
+        honorScore: current.honorScore + 1,
+      );
       _addEvent(
         '${current.name} согласился на «${task.title}» — ждёт твоего решения',
         '✋',
       );
     } else {
-      players[idx] = current.copyWith(taskStatus: TaskStatus.refused);
+      players[idx] = current.copyWith(
+        taskStatus: TaskStatus.refused,
+        shameScore: current.shameScore + 1,
+      );
       _addEvent(
         '${current.name} отказался от «${task.title}» — ждёт твоего решения',
         '🙅',
@@ -600,14 +779,7 @@ class GameServer {
     final current = players[idx];
     switch (decision) {
       case BossTaskDecision.pay:
-        players[idx] = current.copyWith(
-          balance: current.balance + task.reward,
-          clearTask: true,
-        );
-        _addEvent(
-          'Выплата ${current.name}: +${task.reward}₽ за «${task.title}»',
-          '💰',
-        );
+        _applyTaskPayout(players, idx, current, task);
       case BossTaskDecision.skip:
         players[idx] = current.copyWith(clearTask: true);
         _addEvent(
@@ -617,6 +789,7 @@ class GameServer {
       case BossTaskDecision.fine:
         players[idx] = current.copyWith(
           balance: (current.balance - task.penalty).clamp(0, 999999999),
+          shameScore: current.shameScore + 1,
           clearTask: true,
         );
         _addEvent(
@@ -629,6 +802,53 @@ class GameServer {
     _pushState();
   }
 
+  void _applyTaskPayout(
+    List<PlayerModel> players,
+    int targetIdx,
+    PlayerModel target,
+    BossTask task,
+  ) {
+    final assignerId = target.taskAssignedById;
+    final assigner = _playerById(assignerId);
+    var reward = task.reward;
+
+    if (assigner != null && !assigner.isBoss) {
+      final assignerIdx = players.indexWhere((p) => p.id == assigner.id);
+      if (assignerIdx < 0) return;
+      final payer = players[assignerIdx];
+      reward = reward.clamp(0, payer.balance);
+      if (reward <= 0) {
+        players[targetIdx] = target.copyWith(clearTask: true);
+        _addEvent(
+          'У ${payer.name} нет денег на выплату ${target.name} за «${task.title}»',
+          '🚫',
+        );
+        return;
+      }
+      players[assignerIdx] = payer.copyWith(balance: payer.balance - reward);
+      players[targetIdx] = target.copyWith(
+        balance: target.balance + reward,
+        honorScore: target.honorScore + 2,
+        clearTask: true,
+      );
+      _addEvent(
+        '${payer.name} выплатил ${target.name} $reward₽ за «${task.title}»',
+        '💰',
+      );
+      return;
+    }
+
+    players[targetIdx] = target.copyWith(
+      balance: target.balance + reward,
+      honorScore: target.honorScore + 2,
+      clearTask: true,
+    );
+    _addEvent(
+      'Выплата ${target.name}: +$reward₽ за «${task.title}»',
+      '💰',
+    );
+  }
+
   void finePlayer({required String playerId, required int amount}) {
     if (_state.phase != GamePhase.playing) return;
     final idx = _state.players.indexWhere((p) => p.id == playerId);
@@ -638,6 +858,7 @@ class GameServer {
     final current = players[idx];
     players[idx] = current.copyWith(
       balance: (current.balance - amount).clamp(0, 999999999),
+      shameScore: current.shameScore + 1,
     );
     _state = _state.copyWith(players: players);
     _addEvent('Штраф ${current.name}: $amount₽', '⚖️');
@@ -1297,6 +1518,42 @@ class GameClient {
       type: MessageType.officePhotoComment,
       senderId: playerId,
       payload: {'photoId': photoId, 'text': text},
+    ));
+  }
+
+  void payMemberSalary(String targetId) {
+    _send(NetworkMessage(
+      type: MessageType.paySalary,
+      senderId: playerId,
+      payload: {'playerId': targetId},
+    ));
+  }
+
+  void assignTaskTo({required String targetId, required String taskId}) {
+    _send(NetworkMessage(
+      type: MessageType.assignTask,
+      senderId: playerId,
+      payload: {'playerId': targetId, 'taskId': taskId},
+    ));
+  }
+
+  void assignCustomTaskTo({
+    required String targetId,
+    required String title,
+    required String description,
+    required int reward,
+    required int penalty,
+  }) {
+    _send(NetworkMessage(
+      type: MessageType.assignTask,
+      senderId: playerId,
+      payload: {
+        'playerId': targetId,
+        'title': title,
+        'description': description,
+        'reward': reward,
+        'penalty': penalty,
+      },
     ));
   }
 

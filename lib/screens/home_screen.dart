@@ -24,7 +24,7 @@ class HomeScreen extends StatelessWidget {
                     .shake(duration: 2.seconds, hz: 0.5),
                 const SizedBox(height: 16),
                 Text(
-                  'Босс & Команда',
+                  'Boss&Co.',
                   style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                         fontWeight: FontWeight.w900,
                         color: AppTheme.gold,
@@ -118,34 +118,43 @@ class _RoleButton extends StatelessWidget {
             ],
           ),
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
             child: Row(
               children: [
-                Text(emoji, style: const TextStyle(fontSize: 40)),
-                const SizedBox(width: 16),
+                Text(emoji, style: const TextStyle(fontSize: 36)),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 13,
+                          height: 1.25,
                           color: Colors.white.withValues(alpha: 0.85),
                         ),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 Icon(
                   Icons.arrow_forward_ios,
                   color: Colors.white.withValues(alpha: 0.7),

@@ -6,6 +6,7 @@ class GameConstants {
   static const salaryAmount = 5000;
   static const defaultFineAmount = 500;
   static const maxPlayers = 6;
+  static const maxRankLevel = 3;
 }
 
 enum PlayerRole { boss, subordinate }
@@ -22,6 +23,7 @@ enum MessageType {
   assignTask,
   completeTask,
   resolveTask,
+  promotePlayer,
   fine,
   buyItem,
   prank,

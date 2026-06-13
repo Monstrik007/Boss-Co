@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Босс &amp; Команда</string>
+	<string>Boss&amp;Co.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Нужен доступ к локальной сети для поиска игры по Wi-Fi</string>
 	<key>NSBonjourServices</key>

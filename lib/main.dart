@@ -19,7 +19,7 @@ class BossGameApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Босс & Команда',
+      title: 'Boss&Co.',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
       home: const HomeScreen(),

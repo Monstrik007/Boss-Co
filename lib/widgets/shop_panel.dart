@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../models/game_models.dart';
 import '../theme/app_theme.dart';
+import 'player_identity.dart';
 import 'unread_indicator.dart';
 
 class ShopPanel extends StatelessWidget {
@@ -61,6 +62,27 @@ class ShopPanel extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.6),
                 ),
               ),
+              if (!isElite) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '${local.displayEmoji} ${local.name} · ${local.rankLabel}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.slaveTeal.withValues(alpha: 0.85),
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 4),
+                Text(
+                  '👑 ${local.name} · ${local.rankLabel}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.gold.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -80,77 +102,125 @@ class ShopPanel extends StatelessWidget {
                       ? AppTheme.gold
                       : (canAfford ? (isElite ? AppTheme.gold : AppTheme.slaveTeal) : null),
                 ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
-                  leading: Text(item.emoji, style: const TextStyle(fontSize: 32)),
-                  title: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item.name,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            decoration:
-                                hasItem ? TextDecoration.lineThrough : null,
-                          ),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _tierColor(item.tier).withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'T${item.tier}',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: _tierColor(item.tier),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  subtitle: Column(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        item.description,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.white.withValues(alpha: 0.45),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        isElite ? '${item.price} ₽ (мелочь)' : '${item.price} ₽',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: hasItem
-                              ? AppTheme.gold
-                              : (canAfford ? AppTheme.gold : AppTheme.accentPink),
+                      Text(item.emoji, style: const TextStyle(fontSize: 32)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    item.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 15,
+                                      decoration: hasItem
+                                          ? TextDecoration.lineThrough
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _tierColor(item.tier)
+                                        .withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'T${item.tier}',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: _tierColor(item.tier),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              item.description,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                height: 1.25,
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    isElite
+                                        ? '${item.price} ₽ (мелочь)'
+                                        : '${item.price} ₽',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 14,
+                                      color: hasItem
+                                          ? AppTheme.gold
+                                          : (canAfford
+                                              ? AppTheme.gold
+                                              : AppTheme.accentPink),
+                                    ),
+                                  ),
+                                ),
+                                if (hasItem)
+                                  const Icon(
+                                    Icons.check_circle,
+                                    color: AppTheme.gold,
+                                    size: 22,
+                                  )
+                                else
+                                  SizedBox(
+                                    height: 34,
+                                    child: ElevatedButton(
+                                      onPressed:
+                                          canAfford ? () => onBuy(item.id) : null,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: isElite
+                                            ? AppTheme.gold
+                                            : AppTheme.slaveTeal,
+                                        foregroundColor: AppTheme.darkBg,
+                                        disabledBackgroundColor: Colors.white12,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      child: const Text(
+                                        'Купить',
+                                        style: TextStyle(fontSize: 13),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                  trailing: hasItem
-                      ? const Icon(Icons.check_circle, color: AppTheme.gold)
-                      : ElevatedButton(
-                          onPressed: canAfford ? () => onBuy(item.id) : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: isElite ? AppTheme.gold : AppTheme.slaveTeal,
-                            foregroundColor: AppTheme.darkBg,
-                            disabledBackgroundColor: Colors.white12,
-                          ),
-                          child: const Text('Купить'),
-                        ),
                 ),
               ).animate().fadeIn(delay: (i * 40).ms);
             },

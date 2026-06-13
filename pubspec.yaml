@@ -1,5 +1,5 @@
 name: boss_game
-description: "Саркастичная локальная игра Босс vs Подчинённые по Wi-Fi"
+description: "Boss&Co. — саркастичная локальная игра Босс vs Подчинённые по Wi-Fi"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -23,6 +23,13 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icon.png
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true

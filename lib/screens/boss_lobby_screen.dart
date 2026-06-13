@@ -5,6 +5,7 @@ import '../core/constants.dart';
 import '../services/game_server_registry.dart';
 import '../services/network_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/player_identity.dart';
 import 'game_screen.dart';
 
 class BossLobbyScreen extends StatefulWidget {
@@ -371,12 +372,31 @@ class _LobbyView extends StatelessWidget {
                                         decoration: AppTheme.glassCard(),
                                         child: Row(
                                           children: [
-                                            Text('🐑', style: TextStyle(fontSize: 28)),
-                                            const SizedBox(width: 12),
                                             Text(
-                                              p.name,
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w700,
+                                              p.displayEmoji,
+                                              style: const TextStyle(fontSize: 28),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    p.name,
+                                                    style: const TextStyle(
+                                                      fontWeight: FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    p.rankLabel,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: AppTheme.slaveTeal
+                                                          .withValues(alpha: 0.8),
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                           ],
